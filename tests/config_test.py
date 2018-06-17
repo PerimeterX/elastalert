@@ -3,7 +3,7 @@ import copy
 import datetime
 
 import mock
-import os.path
+import os
 import pytest
 
 import elastalert.alerts
@@ -14,7 +14,7 @@ from elastalert.config import load_modules
 from elastalert.config import load_options
 from elastalert.config import load_rules
 from elastalert.util import EAException
-
+from elastalert.config import import_rules
 
 test_config = {'rules_folder': 'test_folder',
                'run_every': {'minutes': 10},
@@ -44,6 +44,7 @@ test_rule = {'es_host': 'test_host',
 test_args = mock.Mock()
 test_args.config = 'test_config'
 test_args.rule = None
+test_args.debug = False
 
 
 def test_import_rules():
@@ -91,6 +92,35 @@ def test_import_import():
         assert rules['es_host'] == 'imported_host'
         assert rules['email'] == ['test@test.test']
         assert rules['filter'] == import_rule['filter']
+
+        # check global import_rule dependency
+        assert import_rules == {'blah.yaml': ['importme.ymlt']}
+
+
+def test_multi_imports():
+    import_rule = copy.deepcopy(test_rule)
+    del(import_rule['es_host'])
+    del(import_rule['es_port'])
+    import_rule['import'] = [
+        'import_me_1.ymlt',
+        'import_me_2.ymlt',
+    ]
+    import_me_1 = {
+        'es_host': 'imported_host',
+    }
+    import_me_2 = {
+        'es_port': 12349,
+    }
+
+    with mock.patch('elastalert.config.yaml_loader') as mock_open:
+        mock_open.side_effect = [import_rule, import_me_1, import_me_2]
+        rules = load_configuration('blah.yaml', test_config)
+        assert mock_open.call_args_list[0][0] == ('blah.yaml',)
+        assert mock_open.call_args_list[1][0] == ('import_me_1.ymlt',)
+        assert mock_open.call_args_list[2][0] == ('import_me_2.ymlt',)
+        assert len(mock_open.call_args_list) == 3
+        assert rules['es_port'] == 12349
+        assert rules['es_host'] == 'imported_host'
 
 
 def test_import_absolute_import():
@@ -195,6 +225,68 @@ def test_load_default_host_port():
             # Assert include doesn't contain duplicates
             assert rules['es_port'] == 12345
             assert rules['es_host'] == 'elasticsearch.test'
+
+
+def test_load_ssl_env_false():
+    test_rule_copy = copy.deepcopy(test_rule)
+    test_rule_copy.pop('es_host')
+    test_rule_copy.pop('es_port')
+    test_config_copy = copy.deepcopy(test_config)
+    with mock.patch('elastalert.config.yaml_loader') as mock_open:
+        mock_open.side_effect = [test_config_copy, test_rule_copy]
+
+        with mock.patch('os.listdir') as mock_ls:
+            with mock.patch.dict(os.environ, {'ES_USE_SSL': 'false'}):
+                mock_ls.return_value = ['testrule.yaml']
+                rules = load_rules(test_args)
+
+                assert rules['use_ssl'] is False
+
+
+def test_load_ssl_env_true():
+    test_rule_copy = copy.deepcopy(test_rule)
+    test_rule_copy.pop('es_host')
+    test_rule_copy.pop('es_port')
+    test_config_copy = copy.deepcopy(test_config)
+    with mock.patch('elastalert.config.yaml_loader') as mock_open:
+        mock_open.side_effect = [test_config_copy, test_rule_copy]
+
+        with mock.patch('os.listdir') as mock_ls:
+            with mock.patch.dict(os.environ, {'ES_USE_SSL': 'true'}):
+                mock_ls.return_value = ['testrule.yaml']
+                rules = load_rules(test_args)
+
+                assert rules['use_ssl'] is True
+
+
+def test_load_url_prefix_env():
+    test_rule_copy = copy.deepcopy(test_rule)
+    test_rule_copy.pop('es_host')
+    test_rule_copy.pop('es_port')
+    test_config_copy = copy.deepcopy(test_config)
+    with mock.patch('elastalert.config.yaml_loader') as mock_open:
+        mock_open.side_effect = [test_config_copy, test_rule_copy]
+
+        with mock.patch('os.listdir') as mock_ls:
+            with mock.patch.dict(os.environ, {'ES_URL_PREFIX': 'es/'}):
+                mock_ls.return_value = ['testrule.yaml']
+                rules = load_rules(test_args)
+
+                assert rules['es_url_prefix'] == 'es/'
+
+
+def test_load_disabled_rules():
+    test_rule_copy = copy.deepcopy(test_rule)
+    test_rule_copy['is_enabled'] = False
+    test_config_copy = copy.deepcopy(test_config)
+    with mock.patch('elastalert.config.yaml_loader') as mock_open:
+        mock_open.side_effect = [test_config_copy, test_rule_copy]
+
+        with mock.patch('os.listdir') as mock_ls:
+            mock_ls.return_value = ['testrule.yaml']
+            rules = load_rules(test_args)
+            # The rule is not loaded for it has "is_enabled=False"
+            assert len(rules['rules']) == 0
 
 
 def test_compound_query_key():
