@@ -13,7 +13,7 @@ import traceback
 from email.mime.text import MIMEText
 from smtplib import SMTP
 from smtplib import SMTPException
-from socket import error
+from socket import error, socket, AF_INET, SOCK_DGRAM
 
 import dateutil.tz
 import kibana
@@ -152,6 +152,7 @@ class ElastAlerter():
         self.disabled_rules = []
         self.replace_dots_in_field_names = self.conf.get('replace_dots_in_field_names', False)
         self.string_multi_field_name = self.conf.get('string_multi_field_name', False)
+        self.statsd_addr = ('statsd_exporter', 8125)
 
         self.writeback_es = elasticsearch_client(self.conf)
         self._es_version = None
@@ -1101,6 +1102,17 @@ class ElastAlerter():
             )
         exit(1)
 
+    def send_via_udp(self, _dict, addr):
+        """
+        Sends key/value pairs via UDP.
+        >>> self.send_via_udp({"example.send":"11|c"}, ("127.0.0.1", 8125))
+        """
+
+        udp_sock = socket(AF_INET, SOCK_DGRAM)
+
+        for item in _dict.items():
+            udp_sock.sendto(":".join(item).encode('utf-8'), addr)
+
     def run_all_rules(self):
         """ Run each rule one time """
         self.send_pending_alerts()
@@ -1129,6 +1141,21 @@ class ElastAlerter():
                 elastalert_logger.info("Ran %s from %s to %s: %s query hits (%s already seen), %s matches,"
                                        " %s alerts sent" % (rule['name'], old_starttime, pretty_ts(endtime, rule.get('use_local_time')),
                                                             total_hits, self.num_dupes, num_matches, self.alerts_sent))
+
+                myip = socket.gethostbyname(socket.gethostname())
+
+                self.send_via_udp({"gauge_query.hits."+ str(myip):str(total_hits) + "|g"}, self.statsd_addr)
+                elastalert_logger.info("metrics sent gauge_query hits statsd exporter")
+
+                self.send_via_udp({"gauge_already_seen.hits":str(self.num_dupes) +"|g"}, self.statsd_addr)
+                elastalert_logger.info("metrics sent gauge_already_seen hits statsd exporter")
+
+                self.send_via_udp({"gauge_query.matches":str(num_matches) +"|g"}, self.statsd_addr)
+                elastalert_logger.info("metrics sent gauge_query matches statsd exporter")
+
+                self.send_via_udp({"gauge_query.alerts_sent":str(self.alerts_sent) +"|g"}, self.statsd_addr)
+                elastalert_logger.info("metrics sent gauge_query alerts_sent statsd exporter")
+
                 self.alerts_sent = 0
 
                 if next_run < datetime.datetime.utcnow():
