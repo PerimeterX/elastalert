@@ -10,6 +10,7 @@ import sys
 import time
 import timeit
 import traceback
+import statsd
 from email.mime.text import MIMEText
 from smtplib import SMTP
 from smtplib import SMTPException
@@ -152,6 +153,9 @@ class ElastAlerter():
         self.disabled_rules = []
         self.replace_dots_in_field_names = self.conf.get('replace_dots_in_field_names', False)
         self.string_multi_field_name = self.conf.get('string_multi_field_name', False)
+        self.statsd = statsd.StatsClient(host=self.conf.get('statsd_hostname', 'statsd'),
+                        port=self.conf.get('statsd_port', '8125'),
+                        prefix=self.conf.get('statsd_metrics_prefix', ''))
 
         self.writeback_es = elasticsearch_client(self.conf)
         self._es_version = None
@@ -1101,6 +1105,10 @@ class ElastAlerter():
             )
         exit(1)
 
+    def send_statsd_metric(self, metric_type, metric_name, metric_value, metric_tags):
+        method_to_call = getattr(self.statsd, metric_type)
+        method_to_call(metric_name, metric_value, tags=metric_tags)
+
     def run_all_rules(self):
         """ Run each rule one time """
         self.send_pending_alerts()
@@ -1129,6 +1137,14 @@ class ElastAlerter():
                 elastalert_logger.info("Ran %s from %s to %s: %s query hits (%s already seen), %s matches,"
                                        " %s alerts sent" % (rule['name'], old_starttime, pretty_ts(endtime, rule.get('use_local_time')),
                                                             total_hits, self.num_dupes, num_matches, self.alerts_sent))
+
+                rule_duration_ms = seconds(endtime - rule.get('original_starttime')) * 1000
+                self.send_statsd_metric('timing', 'rule_time', rule_duration_ms, {"rule_name": rule['name']})
+                self.send_statsd_metric('gauge', 'query.hits', total_hits, {"rule_name": rule['name']})
+                self.send_statsd_metric('gauge', 'already_seen.hits', self.num_dupes, {"rule_name": rule['name']})
+                self.send_statsd_metric('gauge', 'query.matches', num_matches, {"rule_name": rule['name']})
+                self.send_statsd_metric('gauge', 'query.alerts_sent', self.alerts_sent, {"rule_name": rule['name']})
+
                 self.alerts_sent = 0
 
                 if next_run < datetime.datetime.utcnow():
