@@ -7,3 +7,6 @@ setuptools
 sphinx_rtd_theme
 tox<2.0
 urllib3<1.23
+
+urllib3==2.6.3
+requests==2.33.0
