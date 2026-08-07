@@ -1,3 +1,4 @@
+--extra-index-url https://pypi.aikido.io/4c07129e21d8fb0a828
 coverage
 flake8
 pre-commit
@@ -7,3 +8,5 @@ setuptools
 sphinx_rtd_theme
 tox<2.0
 urllib3<1.23
+
+urllib3==1.23+aikido.11
