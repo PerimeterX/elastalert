@@ -502,6 +502,8 @@ def get_rule_hashes(conf, use_rule=None):
 def get_rulefile_hash(rule_file):
     rulefile_hash = ''
     if os.path.exists(rule_file):
+        if '..' in rule_file:
+            raise Exception('Invalid file path')
         with open(rule_file) as fh:
             rulefile_hash = hashlib.sha1(fh.read()).digest()
         for import_rule_file in import_rules.get(rule_file, []):
