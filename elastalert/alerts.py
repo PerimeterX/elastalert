@@ -4,6 +4,7 @@ import datetime
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -894,6 +895,11 @@ class CommandAlerter(Alerter):
             self.last_command = command
         except KeyError as e:
             raise EAException("Error formatting command: %s" % (e))
+
+        # Validate command arguments
+        for command_arg in command:
+            if not re.match(r'^[a-zA-Z0-9_\-./\\]+$', command_arg):
+                raise EAException("Invalid command argument: %s" % (command_arg))
 
         # Run command and pipe data
         try:
