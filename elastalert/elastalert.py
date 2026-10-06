@@ -991,7 +991,11 @@ class ElastAlerter():
                     message = 'Could not load rule %s: %s' % (rule_file, e)
                     self.handle_error(message)
                     # Want to send email to address specified in the rule. Try and load the YAML to find it.
-                    with open(rule_file) as f:
+                    base_real = os.path.realpath(self.conf['rules_folder'])
+                    target_real = os.path.realpath(rule_file)
+                    if os.path.commonpath([base_real, target_real]) != base_real:
+                        raise EAException('Invalid file path')
+                    with open(target_real) as f:
                         try:
                             rule_yaml = yaml.load(f)
                         except yaml.scanner.ScannerError:
