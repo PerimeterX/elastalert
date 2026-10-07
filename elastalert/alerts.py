@@ -4,6 +4,7 @@ import datetime
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -16,6 +17,8 @@ from smtplib import SMTP_SSL
 from smtplib import SMTPAuthenticationError
 from smtplib import SMTPException
 from socket import error
+from urllib import urlencode
+from urlparse import urlparse, urlunparse
 
 import boto3
 import requests
@@ -947,6 +950,53 @@ class SnsAlerter(Alerter):
         elastalert_logger.info("Sent sns notification to %s" % (self.sns_topic_arn))
 
 
+def build_hipchat_url(base_url, room_id, auth_token):
+    try:
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        parsed = urlparse(base_url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        if not re.match(r"^[A-Za-z0-9_-]+$", str(room_id)):
+            raise ValueError("Invalid parameter")
+        query = {"auth_token": auth_token}
+        parsed = parsed._replace(path="/v2/room/%s/notification" % room_id, query=urlencode(query))
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
+
+
+def build_telegram_url(base_url, bot_token):
+    try:
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        parsed = urlparse(base_url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        parsed = parsed._replace(path="/bot%s/sendMessage" % bot_token)
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
+
+
+def build_validated_webhook_url(base_url):
+    try:
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        parsed = urlparse(base_url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
+
+
 class HipChatAlerter(Alerter):
     """ Creates a HipChat room notification for each alert """
     required_options = frozenset(['hipchat_auth_token', 'hipchat_room_id'])
@@ -961,8 +1011,8 @@ class HipChatAlerter(Alerter):
         self.hipchat_ignore_ssl_errors = self.rule.get('hipchat_ignore_ssl_errors', False)
         self.hipchat_notify = self.rule.get('hipchat_notify', True)
         self.hipchat_from = self.rule.get('hipchat_from', '')
-        self.url = 'https://%s/v2/room/%s/notification?auth_token=%s' % (
-            self.hipchat_domain, self.hipchat_room_id, self.hipchat_auth_token)
+        base_url = 'https://%s' % self.hipchat_domain
+        self.url = build_hipchat_url(base_url, self.hipchat_room_id, self.hipchat_auth_token)
         self.hipchat_proxy = self.rule.get('hipchat_proxy', None)
 
     def create_alert_body(self, matches):
@@ -1353,7 +1403,8 @@ class TelegramAlerter(Alerter):
         self.telegram_bot_token = self.rule['telegram_bot_token']
         self.telegram_room_id = self.rule['telegram_room_id']
         self.telegram_api_url = self.rule.get('telegram_api_url', 'api.telegram.org')
-        self.url = 'https://%s/bot%s/%s' % (self.telegram_api_url, self.telegram_bot_token, "sendMessage")
+        base_url = 'https://%s' % self.telegram_api_url
+        self.url = build_telegram_url(base_url, self.telegram_bot_token)
         self.telegram_proxy = self.rule.get('telegram_proxy', None)
 
     def alert(self, matches):
@@ -1398,7 +1449,7 @@ class GitterAlerter(Alerter):
 
     def __init__(self, rule):
         super(GitterAlerter, self).__init__(rule)
-        self.gitter_webhook_url = self.rule['gitter_webhook_url']
+        self.gitter_webhook_url = build_validated_webhook_url(self.rule['gitter_webhook_url'])
         self.gitter_proxy = self.rule.get('gitter_proxy', None)
         self.gitter_msg_level = self.rule.get('gitter_msg_level', 'error')
 
@@ -1443,7 +1494,7 @@ class ServiceNowAlerter(Alerter):
 
     def __init__(self, rule):
         super(ServiceNowAlerter, self).__init__(rule)
-        self.servicenow_rest_url = self.rule['servicenow_rest_url']
+        self.servicenow_rest_url = build_validated_webhook_url(self.rule['servicenow_rest_url'])
         self.servicenow_proxy = self.rule.get('servicenow_proxy', None)
 
     def alert(self, matches):
@@ -1492,7 +1543,7 @@ class AlertaAlerter(Alerter):
     def __init__(self, rule):
         super(AlertaAlerter, self).__init__(rule)
 
-        self.url = self.rule.get('alerta_api_url', None)
+        self.url = build_validated_webhook_url(self.rule.get('alerta_api_url', None))
 
         # Fill up default values
         self.api_key = self.rule.get('alerta_api_key', None)
