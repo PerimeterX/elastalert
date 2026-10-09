@@ -4,6 +4,7 @@ import datetime
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -16,6 +17,7 @@ from smtplib import SMTP_SSL
 from smtplib import SMTPAuthenticationError
 from smtplib import SMTPException
 from socket import error
+from urlparse import urlparse, urlunparse
 
 import boto3
 import requests
@@ -43,6 +45,39 @@ class DateTimeEncoder(json.JSONEncoder):
             return obj.isoformat()
         else:
             return json.JSONEncoder.default(self, obj)
+
+
+def build_validated_webhook_url(base_url):
+    try:
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        parsed = urlparse(base_url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
+
+
+def build_validated_stride_url(base_url, cloud_id, conversation_id):
+    try:
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        parsed = urlparse(base_url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        if not re.match(r"^[A-Za-z0-9_-]+$", cloud_id):
+            raise ValueError("Invalid parameter")
+        if not re.match(r"^[A-Za-z0-9_-]+$", conversation_id):
+            raise ValueError("Invalid parameter")
+        parsed = parsed._replace(path="/site/{}/conversation/{}/message".format(cloud_id, conversation_id))
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class BasicMatchString(object):
@@ -1162,7 +1197,8 @@ class SlackAlerter(Alerter):
 
         for url in self.slack_webhook_url:
             try:
-                response = requests.post(url, data=json.dumps(payload, cls=DateTimeEncoder), headers=headers, proxies=proxies)
+                validated_url = build_validated_webhook_url(url)
+                response = requests.post(validated_url, data=json.dumps(payload, cls=DateTimeEncoder), headers=headers, proxies=proxies)
                 response.raise_for_status()
             except RequestException as e:
                 raise EAException("Error posting to slack: %s" % e)
@@ -1631,7 +1667,8 @@ class HTTPPostAlerter(Alerter):
             proxies = {'https': self.post_proxy} if self.post_proxy else None
             for url in self.post_url:
                 try:
-                    response = requests.post(url, data=json.dumps(payload, cls=DateTimeEncoder),
+                    validated_url = build_validated_webhook_url(url)
+                    response = requests.post(validated_url, data=json.dumps(payload, cls=DateTimeEncoder),
                                              headers=headers, proxies=proxies)
                     response.raise_for_status()
                 except RequestException as e:
@@ -1689,8 +1726,10 @@ class StrideAlerter(Alerter):
         self.stride_converstation_id = self.rule['stride_converstation_id']
         self.stride_ignore_ssl_errors = self.rule.get('stride_ignore_ssl_errors', False)
         self.stride_proxy = self.rule.get('stride_proxy', None)
-        self.url = 'https://api.atlassian.com/site/%s/conversation/%s/message' % (
-            self.stride_cloud_id, self.stride_converstation_id)
+        self.url = build_validated_stride_url(
+            'https://api.atlassian.com',
+            self.stride_cloud_id,
+            self.stride_converstation_id)
 
     def alert(self, matches):
         body = self.create_alert_body(matches).strip()
