@@ -1,12 +1,36 @@
 # -*- coding: utf-8 -*-
 import json
 import logging
+import re
 import requests
 from alerts import Alerter
 from alerts import BasicMatchString
 from util import EAException
 from util import elastalert_logger
 from util import lookup_es_key
+from urllib.parse import urlparse, urlunparse
+
+
+def build_validated_url(base_url: str) -> str:
+    try:
+        # Minimal path validation
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        
+        parsed = urlparse(base_url)
+        
+        # Protocol + host checks
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        allowed_domains = ["api.opsgenie.com"]
+        if parsed.hostname.lower() not in allowed_domains:
+            raise ValueError("Invalid host")
+        
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class OpsGenieAlerter(Alerter):
@@ -69,7 +93,8 @@ class OpsGenieAlerter(Alerter):
         proxies = {'https': self.opsgenie_proxy} if self.opsgenie_proxy else None
 
         try:
-            r = requests.post(self.to_addr, json=post, headers=headers, proxies=proxies)
+            validated_url = build_validated_url(self.to_addr)
+            r = requests.post(validated_url, json=post, headers=headers, proxies=proxies)
 
             logging.debug('request response: {0}'.format(r))
             if r.status_code != 202:
